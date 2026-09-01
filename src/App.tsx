@@ -1186,7 +1186,7 @@ Your job:
 2. For each topic, assess its difficulty level (Easy, Medium, Hard) based on your knowledge of student experiences, exam patterns, and common feedback.
 3. Allocate MORE study hours to Hard topics, moderate hours to Medium, and fewer to Easy.
 4. Create a daily study schedule with realistic time blocks (morning, afternoon, evening).
-5. For each study block, suggest 2-3 related previous year questions (PYQs) or important questions that students should practice.
+5. For each study block, suggest 2-3 previous year questions (PYQs) strictly from the last 5 years, or important questions that students should practice.
 
 IMPORTANT: You MUST respond with ONLY a valid JSON object in this exact format, no markdown, no explanation, just pure JSON:
 
@@ -1287,7 +1287,7 @@ Your job:
 2. For each topic, assess its difficulty level (Easy, Medium, Hard) based on your knowledge of student experiences, exam patterns, and common feedback.
 3. Allocate MORE study hours to Hard topics, moderate hours to Medium, and fewer to Easy.
 4. Create a daily study schedule with realistic time blocks (morning, afternoon, evening).
-5. For each study block, suggest 2-3 related previous year questions (PYQs) or important questions that students should practice.
+5. For each study block, suggest 2-3 previous year questions (PYQs) strictly from the last 5 years, or important questions that students should practice.
 
 IMPORTANT: You MUST respond with ONLY a valid JSON object in this exact format, no markdown, no explanation, just pure JSON:
 
