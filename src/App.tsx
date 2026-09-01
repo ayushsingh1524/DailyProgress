@@ -930,6 +930,7 @@ function TaskCard({
 }) {
   const [expanded, setExpanded] = useState(Boolean(item.note));
   const [draft, setDraft] = useState(item.note);
+  const [showPyqs, setShowPyqs] = useState(false);
   useEffect(() => {
     if (item.note !== draft) setDraft(item.note);
   }, [item.note]);
@@ -940,15 +941,25 @@ function TaskCard({
   ];
   return (
     <article className={`task-card ${item.status}`}>
-      <div className="task-main">
+      <div className="task-main" onClick={() => setShowPyqs(!showPyqs)} style={{ cursor: task.pyqs?.length ? 'pointer' : 'default' }}>
         <div className="task-time">{task.time}</div>
         <div className="task-title">
           <span>{task.icon}</span>
           <div>
-            <h3>{task.title}</h3>
+            <h3>{task.title} {task.pyqs?.length ? <span style={{ fontSize: 12, fontWeight: 'normal', color: 'var(--muted)', marginLeft: 8 }}>{showPyqs ? '▼ Hide PYQs' : '▶ Show PYQs'}</span> : null}</h3>
             <p>
               {task.detail} <b>· {task.duration}h</b>
             </p>
+            {showPyqs && task.pyqs && task.pyqs.length > 0 && (
+              <div style={{ marginTop: 12, padding: 12, background: 'var(--pale)', borderRadius: 8, fontSize: 13, border: '1px solid var(--line)' }}>
+                <strong>📝 Last 5 Years PYQs:</strong>
+                <ul style={{ margin: '8px 0 0 15px', padding: 0, color: 'var(--muted)' }}>
+                  {task.pyqs.map((q, i) => (
+                    <li key={i} style={{ marginBottom: 4 }}>{q}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
       </div>
