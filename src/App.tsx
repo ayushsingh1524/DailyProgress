@@ -135,7 +135,7 @@ const performance = (day: Day) => {
 export default function App() {
   const [data, setData] = useState<Data>(load);
   const [viewedMonth, setViewedMonth] = useState(currentMonthStr());
-  const [selected, setSelected] = useState(1);
+  const [selected, setSelected] = useState(new Date().getDate());
   const TOTAL_DAYS = getDaysInMonth(viewedMonth);
   const activeDays = data.months[viewedMonth] || generateMonth(viewedMonth);
   const [page, setPage] = useState<
@@ -150,6 +150,21 @@ export default function App() {
     document.documentElement.dataset.theme = data.theme;
     document.documentElement.dataset.color = data.colorTheme || "green";
   }, [data]);
+  // Auto-advance to new day at midnight
+  useEffect(() => {
+    const check = () => {
+      const now = new Date();
+      const todayMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      if (todayMonth !== viewedMonth || selected !== now.getDate()) {
+        if (viewedMonth === currentMonthStr()) {
+          setViewedMonth(todayMonth);
+          setSelected(now.getDate());
+        }
+      }
+    };
+    const interval = setInterval(check, 60000);
+    return () => clearInterval(interval);
+  }, [viewedMonth, selected]);
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getUser().then(({ data }) => setCloudUser(data.user));
@@ -344,7 +359,7 @@ export default function App() {
       >
         ← Previous
       </button>
-      <button className="today" onClick={() => navigate(1)}>
+      <button className="today" onClick={() => { setViewedMonth(currentMonthStr()); navigate(new Date().getDate()); }}>
         Today
       </button>
       <button
