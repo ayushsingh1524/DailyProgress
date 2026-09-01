@@ -27,10 +27,11 @@ type Data = {
   months: Record<string, Record<number, Day>>;
   theme: "light" | "dark";
   colorTheme?: string;
+  geminiApiKey?: string;
   days?: Record<number, Day>;
 };
 
-export const DEFAULT_TASKS: Task[] = [
+const DEFAULT_TASKS: Task[] = [
   {
     id: "dsa",
     title: "DSA",
@@ -648,6 +649,22 @@ export default function App() {
         </div>
         <hr />
         <div>
+          <h2>🤖 AI Settings</h2>
+          <p className="muted">Paste your free Gemini API key to enable AI-powered schedule generation.</p>
+          <input
+            className="search"
+            style={{ marginTop: 10, width: '100%' }}
+            type="password"
+            placeholder="Paste your Gemini API key here"
+            value={data.geminiApiKey || ""}
+            onChange={(e) => setData((d) => ({ ...d, geminiApiKey: e.target.value }))}
+          />
+          <p className="muted" style={{ marginTop: 6, fontSize: 11 }}>
+            {data.geminiApiKey ? "✅ API key saved" : "Get a free key at aistudio.google.com/apikey"}
+          </p>
+        </div>
+        <hr />
+        <div>
           <h2>Backup your progress</h2>
           <p className="muted">
             Export a copy or restore it on another device.
@@ -1062,6 +1079,10 @@ function playAlarm() {
 function ScheduleBuilder({ data, setData }: { data: Data, setData: (data: Data | ((d: Data) => Data)) => void }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Partial<Task>>({});
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<string>("");
+  const [syllabusText, setSyllabusText] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeTasks = data.tasks.filter(t => !t.archived);
 
@@ -1069,7 +1090,7 @@ function ScheduleBuilder({ data, setData }: { data: Data, setData: (data: Data |
     if (!draft.title || !draft.time) return;
     setData(prev => {
       const newTasks = [...prev.tasks];
-      if (editingId) {
+      if (editingId && editingId !== "new") {
         const idx = newTasks.findIndex(t => t.id === editingId);
         if (idx !== -1) newTasks[idx] = { ...newTasks[idx], ...draft } as Task;
       } else {
@@ -1093,14 +1114,11 @@ function ScheduleBuilder({ data, setData }: { data: Data, setData: (data: Data |
     if (index + direction < 0 || index + direction >= activeTasks.length) return;
     setData(prev => {
       const newTasks = [...prev.tasks];
-      // We need to find the actual indices in the main array
       const idx1 = newTasks.findIndex(t => t.id === activeTasks[index].id);
       const idx2 = newTasks.findIndex(t => t.id === activeTasks[index + direction].id);
-      
       const temp = newTasks[idx1];
       newTasks[idx1] = newTasks[idx2];
       newTasks[idx2] = temp;
-      
       return { ...prev, tasks: newTasks };
     });
   };
@@ -1128,14 +1146,230 @@ function ScheduleBuilder({ data, setData }: { data: Data, setData: (data: Data |
         { id: "gen4", title: "Meditation", time: "09:00 PM – 09:30 PM", duration: 0.5, icon: "🧘‍♀️", detail: "Wind down" },
       ];
     }
-    
     if (presets.length && confirm(`Replace your active schedule with the ${type} preset? (Past tasks are safely archived)`)) {
       setData(prev => {
-        // Archive current tasks
         const archivedTasks = prev.tasks.map(t => ({ ...t, archived: true }));
         return { ...prev, tasks: [...archivedTasks, ...presets] };
       });
     }
+  };
+
+  const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!data.geminiApiKey) {
+      alert("Please add your Gemini API key in Settings first!");
+      return;
+    }
+
+    setAiLoading(true);
+    setAiResult("Reading your file...");
+
+    try {
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          resolve(result.split(",")[1]); // Remove data:...;base64, prefix
+        };
+        reader.readAsDataURL(file);
+      });
+
+      const mimeType = file.type || "application/pdf";
+      setAiResult("🧠 AI is analyzing your syllabus...");
+
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${data.geminiApiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: base64,
+                  },
+                },
+                {
+                  text: `You are a master study planner. Analyze this syllabus/schedule document carefully.
+
+Your job:
+1. Extract ALL subjects and topics from this document.
+2. For each topic, assess its difficulty level (Easy, Medium, Hard) based on your knowledge of student experiences, exam patterns, and common feedback.
+3. Allocate MORE study hours to Hard topics, moderate hours to Medium, and fewer to Easy.
+4. Create a daily study schedule with realistic time blocks (morning, afternoon, evening).
+5. For each study block, suggest 2-3 related previous year questions (PYQs) or important questions that students should practice.
+
+IMPORTANT: You MUST respond with ONLY a valid JSON object in this exact format, no markdown, no explanation, just pure JSON:
+
+{
+  "analysis": "Brief 2-3 sentence overview of the syllabus",
+  "tasks": [
+    {
+      "title": "Subject/Topic Name",
+      "time": "09:00 AM – 11:00 AM",
+      "duration": 2,
+      "icon": "appropriate emoji",
+      "detail": "What to focus on",
+      "difficulty": "Hard",
+      "pyqs": ["Question 1?", "Question 2?"]
+    }
+  ],
+  "tips": ["Tip 1 for the student", "Tip 2"]
+}
+
+Make the schedule practical and achievable in a single day (total 6-10 hours). Use appropriate emojis for each subject.`
+                },
+              ],
+            }],
+          }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (result.error) {
+        setAiResult(`❌ API Error: ${result.error.message}`);
+        setAiLoading(false);
+        return;
+      }
+
+      const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      // Clean markdown code blocks if present
+      const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+
+      try {
+        const parsed = JSON.parse(cleaned);
+        setAiResult(`✅ AI Analysis: ${parsed.analysis || "Schedule generated!"}\n\n${parsed.tips ? "💡 Tips:\n" + parsed.tips.map((t: string, i: number) => `${i + 1}. ${t}`).join("\n") : ""}\n\n${parsed.tasks ? "📋 PYQs & Important Questions:\n" + parsed.tasks.filter((t: any) => t.pyqs?.length).map((t: any) => `\n${t.icon} ${t.title} (${t.difficulty}):\n${t.pyqs.map((q: string) => `  • ${q}`).join("\n")}`).join("\n") : ""}`);
+
+        if (parsed.tasks && parsed.tasks.length > 0) {
+          const newTasks: Task[] = parsed.tasks.map((t: any, i: number) => ({
+            id: `ai_${Date.now()}_${i}`,
+            title: t.title,
+            time: t.time,
+            duration: t.duration,
+            icon: t.icon || "📚",
+            detail: `${t.detail}${t.difficulty ? ` [${t.difficulty}]` : ""}`,
+            archived: false,
+          }));
+
+          if (confirm(`AI generated ${newTasks.length} study blocks. Apply this schedule? (Current tasks will be archived)`)) {
+            setData(prev => {
+              const archivedTasks = prev.tasks.map(t => ({ ...t, archived: true }));
+              return { ...prev, tasks: [...archivedTasks, ...newTasks] };
+            });
+          }
+        }
+      } catch {
+        setAiResult("⚠️ AI responded but the format was unexpected. Here's the raw response:\n\n" + text);
+      }
+    } catch (err: any) {
+      setAiResult(`❌ Error: ${err.message}`);
+    }
+
+    setAiLoading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleTextAnalysis = async () => {
+    if (!syllabusText.trim()) return;
+    if (!data.geminiApiKey) {
+      alert("Please add your Gemini API key in Settings first!");
+      return;
+    }
+
+    setAiLoading(true);
+    setAiResult("🧠 AI is analyzing your syllabus...");
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${data.geminiApiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{
+                text: `You are a master study planner. Analyze this syllabus/schedule text carefully:
+
+---
+${syllabusText}
+---
+
+Your job:
+1. Extract ALL subjects and topics from this text.
+2. For each topic, assess its difficulty level (Easy, Medium, Hard) based on your knowledge of student experiences, exam patterns, and common feedback.
+3. Allocate MORE study hours to Hard topics, moderate hours to Medium, and fewer to Easy.
+4. Create a daily study schedule with realistic time blocks (morning, afternoon, evening).
+5. For each study block, suggest 2-3 related previous year questions (PYQs) or important questions that students should practice.
+
+IMPORTANT: You MUST respond with ONLY a valid JSON object in this exact format, no markdown, no explanation, just pure JSON:
+
+{
+  "analysis": "Brief 2-3 sentence overview of the syllabus",
+  "tasks": [
+    {
+      "title": "Subject/Topic Name",
+      "time": "09:00 AM – 11:00 AM",
+      "duration": 2,
+      "icon": "appropriate emoji",
+      "detail": "What to focus on",
+      "difficulty": "Hard",
+      "pyqs": ["Question 1?", "Question 2?"]
+    }
+  ],
+  "tips": ["Tip 1 for the student", "Tip 2"]
+}
+
+Make the schedule practical and achievable in a single day (total 6-10 hours). Use appropriate emojis for each subject.`
+              }],
+            }],
+          }),
+        }
+      );
+
+      const result = await response.json();
+      if (result.error) {
+        setAiResult(`❌ API Error: ${result.error.message}`);
+        setAiLoading(false);
+        return;
+      }
+
+      const text2 = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const cleaned = text2.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+
+      try {
+        const parsed = JSON.parse(cleaned);
+        setAiResult(`✅ AI Analysis: ${parsed.analysis || "Schedule generated!"}\n\n${parsed.tips ? "💡 Tips:\n" + parsed.tips.map((t: string, i: number) => `${i + 1}. ${t}`).join("\n") : ""}\n\n${parsed.tasks ? "📋 PYQs & Important Questions:\n" + parsed.tasks.filter((t: any) => t.pyqs?.length).map((t: any) => `\n${t.icon} ${t.title} (${t.difficulty}):\n${t.pyqs.map((q: string) => `  • ${q}`).join("\n")}`).join("\n") : ""}`);
+
+        if (parsed.tasks && parsed.tasks.length > 0) {
+          const newTasks: Task[] = parsed.tasks.map((t: any, i: number) => ({
+            id: `ai_${Date.now()}_${i}`,
+            title: t.title,
+            time: t.time,
+            duration: t.duration,
+            icon: t.icon || "📚",
+            detail: `${t.detail}${t.difficulty ? ` [${t.difficulty}]` : ""}`,
+            archived: false,
+          }));
+
+          if (confirm(`AI generated ${newTasks.length} study blocks. Apply this schedule? (Current tasks will be archived)`)) {
+            setData(prev => {
+              const archivedTasks = prev.tasks.map(t => ({ ...t, archived: true }));
+              return { ...prev, tasks: [...archivedTasks, ...newTasks] };
+            });
+          }
+        }
+      } catch {
+        setAiResult("⚠️ AI responded but the format was unexpected. Here's the raw response:\n\n" + text2);
+      }
+    } catch (err: any) {
+      setAiResult(`❌ Error: ${err.message}`);
+    }
+
+    setAiLoading(false);
   };
 
   return (
@@ -1146,6 +1380,61 @@ function ScheduleBuilder({ data, setData }: { data: Data, setData: (data: Data |
         <p className="muted">Customize your daily tasks and focus areas.</p>
       </div>
 
+      {/* AI Auto-Plan Section */}
+      <div className="settings card" style={{ marginBottom: 20, background: 'linear-gradient(135deg, var(--surface), var(--pale))' }}>
+        <h2>🤖 AI Auto-Plan</h2>
+        <p className="muted" style={{ marginBottom: 15, fontSize: 13 }}>
+          Upload your syllabus (PDF/Image) or paste it as text. AI will analyze difficulty, allocate time, and suggest PYQs.
+        </p>
+
+        {!data.geminiApiKey && (
+          <div style={{ background: 'var(--pale)', padding: 12, borderRadius: 8, marginBottom: 15, fontSize: 13 }}>
+            ⚠️ Add your free Gemini API key in <strong>Settings → AI Settings</strong> first.
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 15 }}>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={aiLoading || !data.geminiApiKey}
+            style={{ background: 'var(--accent)', color: 'var(--bg)', border: 'none', padding: '10px 18px', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}
+          >
+            {aiLoading ? "⏳ Analyzing..." : "📄 Upload Syllabus (PDF/Image)"}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,image/*,.jpg,.jpeg,.png"
+            onChange={handleFileUpload}
+            hidden
+          />
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <textarea
+            className="search"
+            style={{ width: '100%', minHeight: 80, resize: 'vertical' }}
+            placeholder="Or paste your syllabus / subjects list here...&#10;Example: Physics - Mechanics, Optics, Thermodynamics&#10;Chemistry - Organic, Inorganic, Physical&#10;Biology - Botany, Zoology, Genetics"
+            value={syllabusText}
+            onChange={(e) => setSyllabusText(e.target.value)}
+          />
+          <button
+            onClick={handleTextAnalysis}
+            disabled={aiLoading || !data.geminiApiKey || !syllabusText.trim()}
+            style={{ marginTop: 8, background: 'var(--accent)', color: 'var(--bg)', border: 'none', padding: '10px 18px', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}
+          >
+            {aiLoading ? "⏳ Analyzing..." : "🧠 Analyze & Generate Schedule"}
+          </button>
+        </div>
+
+        {aiResult && (
+          <div style={{ marginTop: 15, padding: 15, background: 'var(--surface)', borderRadius: 8, border: '1px solid var(--line)', whiteSpace: 'pre-wrap', fontSize: 13, maxHeight: 400, overflow: 'auto' }}>
+            {aiResult}
+          </div>
+        )}
+      </div>
+
+      {/* Quick Presets */}
       <div className="settings card" style={{ marginBottom: 20 }}>
         <h2>Quick Presets</h2>
         <p className="muted" style={{ marginBottom: 15, fontSize: 13 }}>Load a pre-made template tailored to your field.</p>
@@ -1153,6 +1442,14 @@ function ScheduleBuilder({ data, setData }: { data: Data, setData: (data: Data |
           <button onClick={() => loadPreset('medical')}>🩺 Medical / NEET</button>
           <button onClick={() => loadPreset('engineering')}>💻 Engineering</button>
           <button onClick={() => loadPreset('general')}>🌱 General</button>
+        </div>
+      </div>
+
+      {/* Current Schedule */}
+      <div className="section-title" style={{ marginTop: 25 }}>
+        <div>
+          <p className="eyebrow">YOUR DAILY ROUTINE</p>
+          <h2>Active Tasks ({activeTasks.length})</h2>
         </div>
       </div>
 
@@ -1180,7 +1477,7 @@ function ScheduleBuilder({ data, setData }: { data: Data, setData: (data: Data |
           </div>
         ))}
 
-        {editingId === "new" ? (
+        {editingId === "new" || (editingId && editingId !== "new") ? (
           <div className="task-card" style={{ display: 'grid', gap: 10 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '50px 1fr 1fr', gap: 10 }}>
               <input placeholder="Emoji" value={draft.icon || ""} onChange={e => setDraft({...draft, icon: e.target.value})} className="search" style={{ width: '100%' }} />
@@ -1193,27 +1490,13 @@ function ScheduleBuilder({ data, setData }: { data: Data, setData: (data: Data |
             </div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 10 }}>
               <button onClick={() => { setEditingId(null); setDraft({}); }} className="theme-toggle" style={{ borderRadius: 8, width: 'auto', padding: '0 15px' }}>Cancel</button>
-              <button onClick={saveTask} className="theme-toggle" style={{ borderRadius: 8, width: 'auto', padding: '0 15px', background: 'var(--accent)', color: 'var(--bg)' }}>Save Task</button>
-            </div>
-          </div>
-        ) : editingId ? (
-          <div className="task-card" style={{ display: 'grid', gap: 10 }}>
-             <div style={{ display: 'grid', gridTemplateColumns: '50px 1fr 1fr', gap: 10 }}>
-              <input placeholder="Emoji" value={draft.icon || ""} onChange={e => setDraft({...draft, icon: e.target.value})} className="search" style={{ width: '100%' }} />
-              <input placeholder="Task Title" value={draft.title || ""} onChange={e => setDraft({...draft, title: e.target.value})} className="search" style={{ width: '100%' }} />
-              <input placeholder="Time" value={draft.time || ""} onChange={e => setDraft({...draft, time: e.target.value})} className="search" style={{ width: '100%' }} />
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
-              <input placeholder="Short Description" value={draft.detail || ""} onChange={e => setDraft({...draft, detail: e.target.value})} className="search" style={{ width: '100%' }} />
-              <input type="number" step="0.5" placeholder="Duration (hours)" value={draft.duration || ""} onChange={e => setDraft({...draft, duration: parseFloat(e.target.value)})} className="search" style={{ width: '100%' }} />
-            </div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 10 }}>
-              <button onClick={() => { setEditingId(null); setDraft({}); }} className="theme-toggle" style={{ borderRadius: 8, width: 'auto', padding: '0 15px' }}>Cancel</button>
-              <button onClick={saveTask} className="theme-toggle" style={{ borderRadius: 8, width: 'auto', padding: '0 15px', background: 'var(--accent)', color: 'var(--bg)' }}>Update Task</button>
+              <button onClick={saveTask} className="theme-toggle" style={{ borderRadius: 8, width: 'auto', padding: '0 15px', background: 'var(--accent)', color: 'var(--bg)' }}>
+                {editingId === "new" ? "Save Task" : "Update Task"}
+              </button>
             </div>
           </div>
         ) : (
-           <button onClick={() => { setEditingId("new"); setDraft({ duration: 1, icon: "📌" }); }} className="task-card" style={{ width: '100%', textAlign: 'center', cursor: 'pointer', border: '1px dashed var(--line)' }}>
+          <button onClick={() => { setEditingId("new"); setDraft({ duration: 1, icon: "📌" }); }} className="task-card" style={{ width: '100%', textAlign: 'center', cursor: 'pointer', border: '1px dashed var(--line)' }}>
             + Add New Task
           </button>
         )}
