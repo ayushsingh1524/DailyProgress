@@ -10,6 +10,7 @@ type Task = {
   duration: number;
   icon: string;
   detail: string;
+  archived?: boolean;
 };
 type Day = {
   tasks: Record<string, { status: Status; note: string }>;
@@ -22,13 +23,14 @@ type Day = {
   };
 };
 type Data = {
+  tasks: Task[];
   months: Record<string, Record<number, Day>>;
   theme: "light" | "dark";
   colorTheme?: string;
   days?: Record<number, Day>;
 };
 
-const tasks: Task[] = [
+export const DEFAULT_TASKS: Task[] = [
   {
     id: "dsa",
     title: "DSA",
@@ -63,9 +65,9 @@ const tasks: Task[] = [
   },
 ];
 const key = "study-challenge-v1";
-const newDay = (): Day => ({
+const newDay = (customTasks: Task[] = DEFAULT_TASKS): Day => ({
   tasks: Object.fromEntries(
-    tasks.map((t) => [t.id, { status: "unmarked" as Status, note: "" }]),
+    customTasks.map((t) => [t.id, { status: "unmarked" as Status, note: "" }]),
   ),
   goal: "",
   reflection: { learned: "", struggle: "", improve: "", rating: 0 },
@@ -75,9 +77,10 @@ const currentMonthStr = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
-const generateMonth = (yyyymm: string) => Object.fromEntries(Array.from({ length: getDaysInMonth(yyyymm) }, (_, i) => [i + 1, newDay()]));
+const generateMonth = (yyyymm: string, customTasks: Task[] = DEFAULT_TASKS) => Object.fromEntries(Array.from({ length: getDaysInMonth(yyyymm) }, (_, i) => [i + 1, newDay(customTasks)]));
 const initial = (): Data => ({
-  months: { [currentMonthStr()]: generateMonth(currentMonthStr()) },
+  tasks: DEFAULT_TASKS,
+  months: { [currentMonthStr()]: generateMonth(currentMonthStr(), DEFAULT_TASKS) },
   theme: "light",
 });
 const load = (): Data => {
@@ -98,13 +101,14 @@ const load = (): Data => {
 const normalize = (value: any): Data => {
   const fresh = initial();
   if (!value) return fresh;
+  let activeTasks = value.tasks || DEFAULT_TASKS;
   let months = value.months || {};
   if (value.days && Object.keys(months).length === 0) {
      months = { [currentMonthStr()]: value.days };
   }
   const normalizedMonths: Record<string, Record<number, Day>> = {};
   for (const monthKey of Object.keys(months)) {
-    const freshMonth = generateMonth(monthKey);
+    const freshMonth = generateMonth(monthKey, activeTasks);
     normalizedMonths[monthKey] = Object.fromEntries(
       Object.entries(freshMonth).map(([n, d]) => [
         n,
@@ -120,16 +124,17 @@ const normalize = (value: any): Data => {
   return { ...fresh, ...value, months: normalizedMonths };
 };
 
-const completed = (day: Day) =>
-  tasks.filter((t) => day.tasks[t.id].status === "completed").length;
-const hours = (day: Day) =>
-  tasks.reduce(
-    (sum, t) => sum + (day.tasks[t.id].status === "completed" ? t.duration : 0),
+const completed = (day: Day, tasksList: Task[]) =>
+  tasksList.filter((t) => day.tasks[t.id]?.status === "completed").length;
+const hours = (day: Day, tasksList: Task[]) =>
+  tasksList.reduce(
+    (sum, t) => sum + (day.tasks[t.id]?.status === "completed" ? t.duration : 0),
     0,
   );
-const performance = (day: Day) => {
-  const n = completed(day);
-  return n === 4 ? "great" : n >= 2 ? "partial" : n ? "low" : "empty";
+const performance = (day: Day, tasksList: Task[]) => {
+  const activeTasks = tasksList.filter(t => !t.archived);
+  const n = completed(day, activeTasks);
+  return n === activeTasks.length && activeTasks.length > 0 ? "great" : n >= Math.ceil(activeTasks.length / 2) ? "partial" : n ? "low" : "empty";
 };
 
 export default function App() {
@@ -137,10 +142,10 @@ export default function App() {
   const [viewedMonth, setViewedMonth] = useState(currentMonthStr());
   const [selected, setSelected] = useState(new Date().getDate());
   const TOTAL_DAYS = getDaysInMonth(viewedMonth);
-  const activeDays = data.months[viewedMonth] || generateMonth(viewedMonth);
+  const activeDays = data.months[viewedMonth] || generateMonth(viewedMonth, data.tasks);
   const [page, setPage] = useState<
-    "dashboard" | "overview" | "statistics" | "notes" | "sync" | "settings"
-  >("dashboard");
+    "dashboard" | "schedule" | "overview" | "statistics" | "notes" | "sync" | "settings"
+  >("dashboard"); // ADDED SCHEDULE PAGE
   const [query, setQuery] = useState("");
   const [cloudUser, setCloudUser] = useState<User | null>(null);
   const [cloudStatus, setCloudStatus] = useState("");
@@ -188,7 +193,7 @@ export default function App() {
   const stats = useMemo(() => {
     const days = Object.values(activeDays);
     const all = days.flatMap((d) => Object.values(d.tasks));
-    const qualifying = days.map((d) => completed(d) >= 3);
+    const qualifying = days.map((d) => completed(d, data.tasks.filter(t => !t.archived)) >= Math.ceil(data.tasks.filter(t => !t.archived).length * 0.75));
     let best = 0,
       run = 0;
     qualifying.forEach((ok) => {
@@ -202,9 +207,9 @@ export default function App() {
       done,
       skipped: all.filter((t) => t.status === "skipped").length,
       forgot: all.filter((t) => t.status === "forgot").length,
-      hours: days.reduce((n, d) => n + hours(d), 0),
-      percent: Math.round((done / (TOTAL_DAYS * 4)) * 100),
-      completedDays: days.filter((d) => completed(d) === 4).length,
+      hours: days.reduce((n, d) => n + hours(d, data.tasks), 0),
+      percent: Math.round((done / (TOTAL_DAYS * (data.tasks.filter(t => !t.archived).length || 1))) * 100),
+      completedDays: days.filter((d) => completed(d, data.tasks.filter(t => !t.archived)) === data.tasks.filter(t => !t.archived).length).length,
       current,
       best,
     };
@@ -212,7 +217,7 @@ export default function App() {
   const day = activeDays[selected];
   const updateDay = (fn: (d: Day) => Day) =>
     setData((prev) => {
-      const monthData = prev.months[viewedMonth] || generateMonth(viewedMonth);
+      const monthData = prev.months[viewedMonth] || generateMonth(viewedMonth, prev.tasks);
       return {
         ...prev,
         months: {
@@ -314,8 +319,8 @@ export default function App() {
     let csv =
       "Day,Task,Status,Time,Duration (hrs),Notes,Goal,Learned,Struggle,Improve,Rating\n";
     Object.entries(activeDays).forEach(([n, day]) => {
-      tasks.forEach((t) => {
-        const item = day.tasks[t.id];
+      data.tasks.forEach((t) => {
+        const item = day.tasks[t.id] || { status: 'unmarked', note: '' };
         const escape = (str: string) => `"${str.replace(/"/g, '""')}"`;
         csv += `${n},${escape(t.title)},${item.status},${escape(t.time)},${t.duration},${escape(item.note)},${escape(day.goal)},${escape(day.reflection.learned)},${escape(day.reflection.struggle)},${escape(day.reflection.improve)},${day.reflection.rating}\n`;
       });
@@ -388,11 +393,11 @@ export default function App() {
           className="hero-ring"
           style={
             {
-              "--progress": `${Math.round((completed(day) / 4) * 100)}%`,
+              "--progress": `${Math.round((completed(day, data.tasks.filter(t => !t.archived)) / (data.tasks.filter(t => !t.archived).length || 1)) * 100)}%`,
             } as React.CSSProperties
           }
         >
-          <strong>{Math.round((completed(day) / 4) * 100)}%</strong>
+          <strong>{Math.round((completed(day, data.tasks.filter(t => !t.archived)) / (data.tasks.filter(t => !t.archived).length || 1)) * 100)}%</strong>
           <span>today</span>
         </div>
       </section>
@@ -404,7 +409,7 @@ export default function App() {
         />
         <Metric
           label="Study hours"
-          value={`${stats.hours} / ${TOTAL_DAYS * 7}`}
+          value={`${stats.hours} / ${TOTAL_DAYS * (data.tasks.filter(t => !t.archived).reduce((acc, t) => acc + t.duration, 0) || 1)}`}
           icon="◒"
         />
         <Metric
@@ -438,7 +443,7 @@ export default function App() {
         <DayPicker />
       </div>
       <div className="schedule">
-        {tasks.map((t) => (
+        {data.tasks.filter(t => !t.archived).map((t) => (
           <TaskCard
             key={t.id}
             task={t}
@@ -485,12 +490,12 @@ export default function App() {
         {Array.from({ length: TOTAL_DAYS }, (_, i) => {
           const n = i + 1,
             d = activeDays[n],
-            count = completed(d);
+            count = completed(d, data.tasks.filter(t => !t.archived));
           return (
             <button
               key={n}
               onClick={() => navigate(n)}
-              className={`calendar-day ${performance(d)} ${n === selected ? "active" : ""}`}
+              className={`calendar-day ${performance(d, data.tasks)} ${n === selected ? "active" : ""}`}
             >
               <span>DAY</span>
               <b>{String(n).padStart(2, "0")}</b>
@@ -525,16 +530,16 @@ export default function App() {
       <section className="card chart">
         <div>
           <h2>Daily performance</h2>
-          <p className="muted">Completed study blocks out of 4</p>
+          <p className="muted">Completed blocks out of {data.tasks.filter(t => !t.archived).length}</p>
         </div>
         <div className="bars">
           {Array.from({ length: TOTAL_DAYS }, (_, i) => (
             <div
               key={i}
-              title={`Day ${i + 1}: ${completed(activeDays[i + 1])}/4`}
+              title={`Day ${i + 1}: ${completed(activeDays[i + 1], data.tasks.filter(t => !t.archived))}/${data.tasks.filter(t => !t.archived).length}`}
             >
               <span
-                style={{ height: `${completed(activeDays[i + 1]) * 25}%` }}
+                style={{ height: `${(completed(activeDays[i + 1], data.tasks.filter(t => !t.archived)) / (data.tasks.filter(t => !t.archived).length || 1)) * 100}%` }}
               />
               <small>{i + 1}</small>
             </div>
@@ -546,8 +551,8 @@ export default function App() {
   const Notes = () => {
     const notes = Array.from({ length: TOTAL_DAYS }, (_, i) => i + 1)
       .flatMap((n) =>
-        tasks
-          .filter((t) => activeDays[n].tasks[t.id].note.trim())
+        data.tasks
+          .filter((t) => activeDays[n].tasks[t.id]?.note?.trim())
           .map((t) => ({ n, t, note: activeDays[n].tasks[t.id].note })),
       )
       .filter((x) =>
@@ -713,6 +718,8 @@ export default function App() {
   const content =
     page === "dashboard" ? (
       dashboard
+    ) : page === "schedule" ? (
+      <ScheduleBuilder data={data} setData={setData} />
     ) : page === "overview" ? (
       <Overview />
     ) : page === "statistics" ? (
@@ -726,6 +733,7 @@ export default function App() {
     );
   const navItems = [
     ["dashboard", "Dashboard", "⌂"],
+    ["schedule", "Schedule", "🗓️"],
     ["overview", "Overview", "▦"],
     ["statistics", "Stats", "◔"],
     ["notes", "Notes", "▤"],
@@ -751,7 +759,7 @@ export default function App() {
           ))}
         </nav>
         <div className="aside-bottom">
-          7 hour daily target
+          {data.tasks.filter(t => !t.archived).reduce((acc, t) => acc + t.duration, 0)} hour daily target
           <br />
           <strong>Small steps. Real progress.</strong>
         </div>
@@ -774,7 +782,7 @@ export default function App() {
             {data.theme === "light" ? "☾" : "☀"}
           </button>
         </header>
-        {page === "dashboard" && <FocusSprint />}
+        {page === "dashboard" && <FocusSprint tasks={data.tasks} />}
         {content}
       </main>
       <nav className="mobile-nav">
@@ -1050,10 +1058,174 @@ function playAlarm() {
   beep(t + 1.05, 1046.5);
   beep(t + 1.4, 1174.66, 0.5);
 }
-function FocusSprint() {
+
+function ScheduleBuilder({ data, setData }: { data: Data, setData: (data: Data | ((d: Data) => Data)) => void }) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Partial<Task>>({});
+
+  const activeTasks = data.tasks.filter(t => !t.archived);
+
+  const saveTask = () => {
+    if (!draft.title || !draft.time) return;
+    setData(prev => {
+      const newTasks = [...prev.tasks];
+      if (editingId) {
+        const idx = newTasks.findIndex(t => t.id === editingId);
+        if (idx !== -1) newTasks[idx] = { ...newTasks[idx], ...draft } as Task;
+      } else {
+        newTasks.push({ ...draft, id: Date.now().toString(), archived: false } as Task);
+      }
+      return { ...prev, tasks: newTasks };
+    });
+    setEditingId(null);
+    setDraft({});
+  };
+
+  const archiveTask = (id: string) => {
+    if (!confirm("Are you sure you want to remove this task? Past data will be preserved.")) return;
+    setData(prev => ({
+      ...prev,
+      tasks: prev.tasks.map(t => t.id === id ? { ...t, archived: true } : t)
+    }));
+  };
+
+  const moveTask = (index: number, direction: -1 | 1) => {
+    if (index + direction < 0 || index + direction >= activeTasks.length) return;
+    setData(prev => {
+      const newTasks = [...prev.tasks];
+      // We need to find the actual indices in the main array
+      const idx1 = newTasks.findIndex(t => t.id === activeTasks[index].id);
+      const idx2 = newTasks.findIndex(t => t.id === activeTasks[index + direction].id);
+      
+      const temp = newTasks[idx1];
+      newTasks[idx1] = newTasks[idx2];
+      newTasks[idx2] = temp;
+      
+      return { ...prev, tasks: newTasks };
+    });
+  };
+
+  const loadPreset = (type: string) => {
+    let presets: Task[] = [];
+    if (type === 'medical') {
+      presets = [
+        { id: "med1", title: "Anatomy Revision", time: "08:00 AM – 10:00 AM", duration: 2, icon: "🧠", detail: "Notes + Diagrams" },
+        { id: "med2", title: "Mock Test", time: "11:00 AM – 02:00 PM", duration: 3, icon: "📝", detail: "Full length paper" },
+        { id: "med3", title: "Clinical Postings", time: "03:00 PM – 06:00 PM", duration: 3, icon: "🏥", detail: "Ward duties" },
+        { id: "med4", title: "Biology NCERT", time: "07:00 PM – 09:00 PM", duration: 2, icon: "🧬", detail: "Line by line reading" },
+      ];
+    } else if (type === 'engineering') {
+      presets = [
+        { id: "eng1", title: "DSA Practice", time: "09:00 AM – 11:00 AM", duration: 2, icon: "💻", detail: "Leetcode / CP" },
+        { id: "eng2", title: "System Design", time: "02:00 PM – 04:00 PM", duration: 2, icon: "🏗️", detail: "Architecture concepts" },
+        { id: "eng3", title: "Development", time: "05:00 PM – 08:00 PM", duration: 3, icon: "🚀", detail: "Projects & open source" },
+      ];
+    } else if (type === 'general') {
+      presets = [
+        { id: "gen1", title: "Deep Work", time: "09:00 AM – 11:00 AM", duration: 2, icon: "🎧", detail: "High focus tasks" },
+        { id: "gen2", title: "Reading", time: "12:00 PM – 01:00 PM", duration: 1, icon: "📖", detail: "Books / Articles" },
+        { id: "gen3", title: "Workout", time: "05:00 PM – 06:30 PM", duration: 1.5, icon: "🏋️", detail: "Gym or Cardio" },
+        { id: "gen4", title: "Meditation", time: "09:00 PM – 09:30 PM", duration: 0.5, icon: "🧘‍♀️", detail: "Wind down" },
+      ];
+    }
+    
+    if (presets.length && confirm(`Replace your active schedule with the ${type} preset? (Past tasks are safely archived)`)) {
+      setData(prev => {
+        // Archive current tasks
+        const archivedTasks = prev.tasks.map(t => ({ ...t, archived: true }));
+        return { ...prev, tasks: [...archivedTasks, ...presets] };
+      });
+    }
+  };
+
+  return (
+    <div>
+      <div className="page-heading">
+        <span className="eyebrow">ROUTINE BUILDER</span>
+        <h1>Design Your Schedule</h1>
+        <p className="muted">Customize your daily tasks and focus areas.</p>
+      </div>
+
+      <div className="settings card" style={{ marginBottom: 20 }}>
+        <h2>Quick Presets</h2>
+        <p className="muted" style={{ marginBottom: 15, fontSize: 13 }}>Load a pre-made template tailored to your field.</p>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button onClick={() => loadPreset('medical')}>🩺 Medical / NEET</button>
+          <button onClick={() => loadPreset('engineering')}>💻 Engineering</button>
+          <button onClick={() => loadPreset('general')}>🌱 General</button>
+        </div>
+      </div>
+
+      <div className="schedule">
+        {activeTasks.map((t, index) => (
+          <div key={t.id} className="task-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div className="task-main" style={{ gap: 15 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <button onClick={() => moveTask(index, -1)} disabled={index === 0} style={{ padding: '2px 5px', fontSize: 10 }}>▲</button>
+                <button onClick={() => moveTask(index, 1)} disabled={index === activeTasks.length - 1} style={{ padding: '2px 5px', fontSize: 10 }}>▼</button>
+              </div>
+              <div className="task-time" style={{ minWidth: 120 }}>{t.time}</div>
+              <div className="task-title" style={{ flex: 1 }}>
+                <span>{t.icon}</span>
+                <div>
+                  <h3>{t.title}</h3>
+                  <p>{t.detail} <b>· {t.duration} hr</b></p>
+                </div>
+              </div>
+            </div>
+            <div className="task-actions">
+              <button onClick={() => { setEditingId(t.id); setDraft(t); }}>Edit</button>
+              <button className="note-button" style={{ color: 'var(--red)' }} onClick={() => archiveTask(t.id)}>Remove</button>
+            </div>
+          </div>
+        ))}
+
+        {editingId === "new" ? (
+          <div className="task-card" style={{ display: 'grid', gap: 10 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '50px 1fr 1fr', gap: 10 }}>
+              <input placeholder="Emoji" value={draft.icon || ""} onChange={e => setDraft({...draft, icon: e.target.value})} className="search" style={{ width: '100%' }} />
+              <input placeholder="Task Title" value={draft.title || ""} onChange={e => setDraft({...draft, title: e.target.value})} className="search" style={{ width: '100%' }} />
+              <input placeholder="Time (e.g. 09:00 AM - 11:00 AM)" value={draft.time || ""} onChange={e => setDraft({...draft, time: e.target.value})} className="search" style={{ width: '100%' }} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
+              <input placeholder="Short Description" value={draft.detail || ""} onChange={e => setDraft({...draft, detail: e.target.value})} className="search" style={{ width: '100%' }} />
+              <input type="number" step="0.5" placeholder="Duration (hours)" value={draft.duration || ""} onChange={e => setDraft({...draft, duration: parseFloat(e.target.value)})} className="search" style={{ width: '100%' }} />
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 10 }}>
+              <button onClick={() => { setEditingId(null); setDraft({}); }} className="theme-toggle" style={{ borderRadius: 8, width: 'auto', padding: '0 15px' }}>Cancel</button>
+              <button onClick={saveTask} className="theme-toggle" style={{ borderRadius: 8, width: 'auto', padding: '0 15px', background: 'var(--accent)', color: 'var(--bg)' }}>Save Task</button>
+            </div>
+          </div>
+        ) : editingId ? (
+          <div className="task-card" style={{ display: 'grid', gap: 10 }}>
+             <div style={{ display: 'grid', gridTemplateColumns: '50px 1fr 1fr', gap: 10 }}>
+              <input placeholder="Emoji" value={draft.icon || ""} onChange={e => setDraft({...draft, icon: e.target.value})} className="search" style={{ width: '100%' }} />
+              <input placeholder="Task Title" value={draft.title || ""} onChange={e => setDraft({...draft, title: e.target.value})} className="search" style={{ width: '100%' }} />
+              <input placeholder="Time" value={draft.time || ""} onChange={e => setDraft({...draft, time: e.target.value})} className="search" style={{ width: '100%' }} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
+              <input placeholder="Short Description" value={draft.detail || ""} onChange={e => setDraft({...draft, detail: e.target.value})} className="search" style={{ width: '100%' }} />
+              <input type="number" step="0.5" placeholder="Duration (hours)" value={draft.duration || ""} onChange={e => setDraft({...draft, duration: parseFloat(e.target.value)})} className="search" style={{ width: '100%' }} />
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 10 }}>
+              <button onClick={() => { setEditingId(null); setDraft({}); }} className="theme-toggle" style={{ borderRadius: 8, width: 'auto', padding: '0 15px' }}>Cancel</button>
+              <button onClick={saveTask} className="theme-toggle" style={{ borderRadius: 8, width: 'auto', padding: '0 15px', background: 'var(--accent)', color: 'var(--bg)' }}>Update Task</button>
+            </div>
+          </div>
+        ) : (
+           <button onClick={() => { setEditingId("new"); setDraft({ duration: 1, icon: "📌" }); }} className="task-card" style={{ width: '100%', textAlign: 'center', cursor: 'pointer', border: '1px dashed var(--line)' }}>
+            + Add New Task
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FocusSprint({ tasks }: { tasks: Task[] }) {
   const [seconds, setSeconds] = useState(25 * 60);
   const [running, setRunning] = useState(false);
-  const [focusTask, setFocusTask] = useState(tasks[0].id);
+  const [focusTask, setFocusTask] = useState(tasks.filter(t=>!t.archived)[0]?.id || "");
   const [showDone, setShowDone] = useState(false);
   useEffect(() => {
     if (!running) return;
@@ -1161,7 +1333,7 @@ function FocusSprint() {
             onChange={(e) => setFocusTask(e.target.value)}
             disabled={running}
           >
-            {tasks.map((t) => (
+            {tasks.filter(t => !t.archived).map((t) => (
               <option key={t.id} value={t.id}>
                 {t.icon} {t.title}
               </option>
