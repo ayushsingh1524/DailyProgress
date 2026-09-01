@@ -2,8 +2,6 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { isCloudConfigured, supabase } from "./supabase";
 
-const BUILT_IN_GEMINI_KEY = import.meta.env.VITE_GEMINI_KEY || "";
-
 type Status = "completed" | "skipped" | "forgot" | "unmarked";
 type Task = {
   id: string;
@@ -29,7 +27,6 @@ type Data = {
   months: Record<string, Record<number, Day>>;
   theme: "light" | "dark";
   colorTheme?: string;
-  geminiApiKey?: string;
   days?: Record<number, Day>;
 };
 
@@ -652,24 +649,7 @@ export default function App() {
         <hr />
         <div>
           <h2>🤖 AI Settings</h2>
-          {BUILT_IN_GEMINI_KEY ? (
-            <p className="muted">✅ AI is active with built-in Gemini key. No setup needed!</p>
-          ) : (
-            <>
-              <p className="muted">Paste your free Gemini API key to enable AI-powered schedule generation.</p>
-              <input
-                className="search"
-                style={{ marginTop: 10, width: '100%' }}
-                type="password"
-                placeholder="Paste your Gemini API key here"
-                value={data.geminiApiKey || ""}
-                onChange={(e) => setData((d) => ({ ...d, geminiApiKey: e.target.value }))}
-              />
-              <p className="muted" style={{ marginTop: 6, fontSize: 11 }}>
-                {data.geminiApiKey ? "✅ API key saved" : "Get a free key at aistudio.google.com/apikey"}
-              </p>
-            </>
-          )}
+          <p className="muted">✅ AI is enabled via server‑side proxy. No API key required.</p>
         </div>
         <hr />
         <div>
@@ -1165,10 +1145,7 @@ function ScheduleBuilder({ data, setData }: { data: Data, setData: (data: Data |
   const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!import.meta.env.VITE_GEMINI_KEY && !(data.geminiApiKey || BUILT_IN_GEMINI_KEY)) {
-      alert("Please add your Gemini API key in Settings first!");
-      return;
-    }
+
 
     setAiLoading(true);
     setAiResult("Reading your file...");
@@ -1187,7 +1164,7 @@ function ScheduleBuilder({ data, setData }: { data: Data, setData: (data: Data |
       setAiResult("🧠 AI is analyzing your syllabus...");
 
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${import.meta.env.VITE_GEMINI_KEY || (data.geminiApiKey || BUILT_IN_GEMINI_KEY)}`,
+        '/api/gemini',
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1283,17 +1260,14 @@ Make the schedule practical and achievable in a single day (total 6-10 hours). U
 
   const handleTextAnalysis = async () => {
     if (!syllabusText.trim()) return;
-    if (!import.meta.env.VITE_GEMINI_KEY && !(data.geminiApiKey || BUILT_IN_GEMINI_KEY)) {
-      alert("Please add your Gemini API key in Settings first!");
-      return;
-    }
+
 
     setAiLoading(true);
     setAiResult("🧠 AI is analyzing your syllabus...");
 
     try {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${import.meta.env.VITE_GEMINI_KEY || (data.geminiApiKey || BUILT_IN_GEMINI_KEY)}`,
+        '/api/gemini',
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1395,16 +1369,12 @@ Make the schedule practical and achievable in a single day (total 6-10 hours). U
           Upload your syllabus (PDF/Image) or paste it as text. AI will analyze difficulty, allocate time, and suggest PYQs.
         </p>
 
-        {!(import.meta.env.VITE_GEMINI_KEY || (data.geminiApiKey || BUILT_IN_GEMINI_KEY)) && (
-          <div style={{ background: 'var(--pale)', padding: 12, borderRadius: 8, marginBottom: 15, fontSize: 13 }}>
-            ⚠️ Add your free Gemini API key in <strong>Settings → AI Settings</strong> first.
-          </div>
-        )}
+        
 
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 15 }}>
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={aiLoading || !(import.meta.env.VITE_GEMINI_KEY || (data.geminiApiKey || BUILT_IN_GEMINI_KEY))}
+            disabled={aiLoading}
             style={{ background: 'var(--accent)', color: 'var(--bg)', border: 'none', padding: '10px 18px', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}
           >
             {aiLoading ? "⏳ Analyzing..." : "📄 Upload Syllabus (PDF/Image)"}
@@ -1428,7 +1398,7 @@ Make the schedule practical and achievable in a single day (total 6-10 hours). U
           />
           <button
             onClick={handleTextAnalysis}
-            disabled={aiLoading || !(import.meta.env.VITE_GEMINI_KEY || (data.geminiApiKey || BUILT_IN_GEMINI_KEY)) || !syllabusText.trim()}
+            disabled={aiLoading || !syllabusText.trim()}
             style={{ marginTop: 8, background: 'var(--accent)', color: 'var(--bg)', border: 'none', padding: '10px 18px', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}
           >
             {aiLoading ? "⏳ Analyzing..." : "🧠 Analyze & Generate Schedule"}
