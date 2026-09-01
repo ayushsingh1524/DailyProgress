@@ -10,6 +10,7 @@ type Task = {
   duration: number;
   icon: string;
   detail: string;
+  pyqs?: string[];
   archived?: boolean;
 };
 type Day = {
@@ -1237,6 +1238,7 @@ Make the schedule practical and achievable in a single day (total 6-10 hours). U
             duration: t.duration,
             icon: t.icon || "📚",
             detail: `${t.detail}${t.difficulty ? ` [${t.difficulty}]` : ""}`,
+            pyqs: t.pyqs || [],
             archived: false,
           }));
 
@@ -1334,6 +1336,7 @@ Make the schedule practical and achievable in a single day (total 6-10 hours). U
             duration: t.duration,
             icon: t.icon || "📚",
             detail: `${t.detail}${t.difficulty ? ` [${t.difficulty}]` : ""}`,
+            pyqs: t.pyqs || [],
             archived: false,
           }));
 
@@ -1445,6 +1448,16 @@ Make the schedule practical and achievable in a single day (total 6-10 hours). U
                 <div>
                   <h3>{t.title}</h3>
                   <p>{t.detail} <b>· {t.duration} hr</b></p>
+                  {t.pyqs && t.pyqs.length > 0 && (
+                    <div style={{ marginTop: 8, padding: 10, background: 'var(--pale)', borderRadius: 6, fontSize: 12 }}>
+                      <strong>📝 PYQs / Important:</strong>
+                      <ul style={{ margin: '4px 0 0 15px', padding: 0, color: 'var(--muted)' }}>
+                        {t.pyqs.map((q, i) => (
+                          <li key={i} style={{ marginBottom: 2 }}>{q}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
